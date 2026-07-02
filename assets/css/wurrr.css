@@ -1,36 +1,7 @@
-.wurrr-switcher {
-	margin: 1em 0;
+.wurrr {
 	display: inline-block;
 }
 
-.wurrr-switcher select {
-	padding: 0.5em;
-	border: 1px solid #ccc;
-	border-radius: 4px;
-	background: #fff;
-	font-size: 0.9em;
-	cursor: pointer;
-}
-
-.wurrr-price-converted {
-	white-space: nowrap;
-}
-
-.wurrr-price-converted .wurrr-original {
-	color: #999;
-	font-size: 0.85em;
-	text-decoration: line-through;
-}
-
-.wurrr-price-badge {
-	display: inline-block;
-	background: #f0f0f0;
-	padding: 0.15em 0.5em;
-	border-radius: 3px;
-	font-weight: 600;
-}
-
-.wurrr-price-badge::before {
-	content: "~";
-	margin-right: 0.15em;
+.wurrr-select {
+	max-width: 240px;
 }

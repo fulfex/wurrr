@@ -1,7 +1,7 @@
 ( function( $ ) {
 	'use strict';
 
-	$( document ).on( 'change', '.wurrr-currency-select', function() {
+	$( document ).on( 'change', '.wurrr-select', function() {
 		var currency = $( this ).val();
 
 		$.post( wurrr.ajax_url, {

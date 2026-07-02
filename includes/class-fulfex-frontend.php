@@ -23,7 +23,8 @@ class Fulfex_Frontend {
 		add_filter( 'woocommerce_cart_total', array( $this, 'convert_cart_total' ), 10 );
 		add_filter( 'woocommerce_cart_totals_coupon_html', array( $this, 'convert_coupon_html' ), 10, 2 );
 
-		add_shortcode( 'wurrr_switcher', array( $this, 'render_switcher' ) );
+		add_shortcode( 'wurrr', array( $this, 'render_shortcode' ) );
+		add_shortcode( 'wurrr_switcher', array( $this, 'render_shortcode' ) );
 
 		add_action( 'wp_ajax_wp_exchange_convert', array( $this, 'ajax_convert_price' ) );
 		add_action( 'wp_ajax_nopriv_wp_exchange_convert', array( $this, 'ajax_convert_price' ) );
@@ -32,9 +33,9 @@ class Fulfex_Frontend {
 
 		$position = get_option( 'wp_exchange_switcher_position', 'shortcode' );
 		if ( 'header' === $position ) {
-			add_action( 'wp_head', array( $this, 'render_switcher' ) );
+			add_action( 'wp_head', array( $this, 'render_shortcode' ) );
 		} elseif ( 'footer' === $position ) {
-			add_action( 'wp_footer', array( $this, 'render_switcher' ) );
+			add_action( 'wp_footer', array( $this, 'render_shortcode' ) );
 		}
 	}
 
@@ -250,6 +251,41 @@ class Fulfex_Frontend {
 		}
 
 		return $this->currency->format_price( $converted, $user_currency );
+	}
+
+	public function render_shortcode( array $atts = array() ): string {
+		$public = get_option( 'wp_exchange_public_currencies', 'USD,EUR,GBP,JPY,AUD,CAD,CHF,CNY,SGD' );
+		$codes  = array_filter( array_map( 'trim', explode( ',', $public ) ) );
+
+		if ( empty( $codes ) ) {
+			return '';
+		}
+
+		$user_currency = $this->currency->get_user_currency();
+		$base          = $this->currency->get_base_currency();
+		$selected      = strtoupper( $user_currency );
+
+		$output  = '<div class="wurrr" data-wurrr>';
+		$output .= '<select class="wurrr-select" aria-label="' . esc_attr__( 'Currency selector', 'wurrr' ) . '">';
+
+		foreach ( $codes as $code ) {
+			$code   = strtoupper( $code );
+			$name   = $this->currency->get_currency_name( $code );
+			$symbol = $this->currency->get_currency_symbol( $code );
+			$label  = sprintf( '%s (%s)', $code, $symbol );
+			$is_selected = selected( $selected, $code, false );
+
+			$output .= sprintf(
+				'<option value="%s" %s>%s</option>',
+				esc_attr( $code ),
+				$is_selected,
+				esc_html( $label )
+			);
+		}
+
+		$output .= '</select></div>';
+
+		return $output;
 	}
 
 	public function render_switcher( array $atts = array() ): string {

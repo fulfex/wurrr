@@ -55,7 +55,7 @@ Frankfurter is the easiest to start with since it requires no API key. For produ
 
 = Can customers choose their own currency? =
 
-Yes. Enable the currency switcher in settings and place it via the `[wurrr_switcher]` shortcode or a widget area.
+Yes. Enable the currency switcher in settings and place it via the `[wurrr]` shortcode or a widget area.
 
 = Does this work with variable products? =
 

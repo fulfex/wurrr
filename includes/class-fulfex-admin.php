@@ -15,6 +15,7 @@ class Fulfex_Admin {
 		add_action( 'admin_post_wp_exchange_save_providers', array( $this, 'save_providers' ) );
 		add_action( 'admin_notices', array( $this, 'admin_notices' ) );
 		add_action( 'wp_ajax_wurrr_health_test', array( $this, 'ajax_health_test' ) );
+		add_filter( 'pre_update_option_wp_exchange_public_currencies', array( $this, 'handle_public_currencies_update' ), 10, 2 );
 		add_filter(
 			'plugin_action_links_' . WURRR_PLUGIN_BASENAME,
 			array( $this, 'plugin_action_links' )
@@ -33,26 +34,18 @@ class Fulfex_Admin {
 	}
 
 	public function register_settings(): void {
-		register_setting( 'wp_exchange_settings', 'wp_exchange_base_currency', array( 'sanitize_callback' => 'sanitize_text_field' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_cache_duration', array( 'sanitize_callback' => 'absint' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_enable_ip_detection', array( 'sanitize_callback' => array( $this, 'sanitize_yes_no' ) ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_display_style', array( 'sanitize_callback' => 'sanitize_text_field' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_switcher_position', array( 'sanitize_callback' => 'sanitize_text_field' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_enable_round_robin', array( 'sanitize_callback' => array( $this, 'sanitize_yes_no' ) ) );
+		register_setting( 'wp_exchange_settings', 'wp_exchange_public_currencies', array( 'sanitize_callback' => array( $this, 'sanitize_currency_list' ) ) );
 
 		add_settings_section(
 			'wp_exchange_general',
 			__( 'General Settings', 'wurrr' ),
 			null,
 			'wp_exchange_settings'
-		);
-
-		add_settings_field(
-			'wp_exchange_base_currency',
-			__( 'Base Currency', 'wurrr' ),
-			array( $this, 'render_currency_select' ),
-			'wp_exchange_settings',
-			'wp_exchange_general'
 		);
 
 		add_settings_field(
@@ -91,6 +84,14 @@ class Fulfex_Admin {
 			'wp_exchange_enable_round_robin',
 			__( 'Enable Round-Robin', 'wurrr' ),
 			array( $this, 'render_round_robin' ),
+			'wp_exchange_settings',
+			'wp_exchange_general'
+		);
+
+		add_settings_field(
+			'wp_exchange_public_currencies',
+			__( 'Public Currencies', 'wurrr' ),
+			array( $this, 'render_public_currencies' ),
 			'wp_exchange_settings',
 			'wp_exchange_general'
 		);
@@ -261,7 +262,7 @@ class Fulfex_Admin {
 	private function render_health_tab(): void {
 		$providers = apply_filters( 'wp_exchange_providers', array() );
 		$health    = get_option( 'wp_exchange_provider_health', array() );
-		$base      = get_option( 'wp_exchange_base_currency', 'USD' );
+		$base      = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : 'USD';
 
 		?>
 		<p>
@@ -517,21 +518,6 @@ class Fulfex_Admin {
 		settings_errors( 'wp_exchange' );
 	}
 
-	public function render_currency_select(): void {
-		$selected = get_option( 'wp_exchange_base_currency', 'USD' );
-		$common   = array( 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW', 'HKD', 'SGD', 'MYR', 'IDR', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'SEK', 'NOK', 'DKK', 'NZD', 'ZAR' );
-		?>
-		<select name="wp_exchange_base_currency">
-			<?php foreach ( $common as $code ) : ?>
-				<option value="<?php echo esc_attr( $code ); ?>" <?php selected( $selected, $code ); ?>>
-					<?php echo esc_html( $code ); ?>
-				</option>
-			<?php endforeach; ?>
-		</select>
-		<p class="description"><?php esc_html_e( 'Your store\'s default base currency. All prices are converted from this currency.', 'wurrr' ); ?></p>
-		<?php
-	}
-
 	public function render_cache_duration(): void {
 		$value = get_option( 'wp_exchange_cache_duration', 24 );
 		?>
@@ -573,7 +559,7 @@ class Fulfex_Admin {
 		$positions = array(
 			'header'    => __( 'Header', 'wurrr' ),
 			'footer'    => __( 'Footer', 'wurrr' ),
-			'shortcode' => __( 'Shortcode only (use [wurrr_switcher] in content or widgets)', 'wurrr' ),
+			'shortcode' => __( 'Shortcode only (use [wurrr] in content or widgets)', 'wurrr' ),
 		);
 		?>
 		<select name="wp_exchange_switcher_position">
@@ -585,7 +571,7 @@ class Fulfex_Admin {
 		</select>
 		<p class="description">
 			<?php esc_html_e( 'Use shortcode', 'wurrr' ); ?>
-			<code>[wurrr_switcher]</code>
+			<code>[wurrr]</code>
 			<?php esc_html_e( 'to place the currency switcher anywhere.', 'wurrr' ); ?>
 		</p>
 		<?php
@@ -604,8 +590,77 @@ class Fulfex_Admin {
 		<?php
 	}
 
+	public function render_public_currencies(): void {
+		$value  = get_option( 'wp_exchange_public_currencies', 'USD,EUR,GBP,JPY,AUD,CAD,CHF,CNY,SGD' );
+		$common = array(
+			'USD' => __( 'US Dollar', 'wurrr' ),
+			'EUR' => __( 'Euro', 'wurrr' ),
+			'GBP' => __( 'British Pound', 'wurrr' ),
+			'JPY' => __( 'Japanese Yen', 'wurrr' ),
+			'AUD' => __( 'Australian Dollar', 'wurrr' ),
+			'CAD' => __( 'Canadian Dollar', 'wurrr' ),
+			'CHF' => __( 'Swiss Franc', 'wurrr' ),
+			'CNY' => __( 'Chinese Yuan', 'wurrr' ),
+			'SGD' => __( 'Singapore Dollar', 'wurrr' ),
+			'KRW' => __( 'South Korean Won', 'wurrr' ),
+			'HKD' => __( 'Hong Kong Dollar', 'wurrr' ),
+			'MYR' => __( 'Malaysian Ringgit', 'wurrr' ),
+			'IDR' => __( 'Indonesian Rupiah', 'wurrr' ),
+			'INR' => __( 'Indian Rupee', 'wurrr' ),
+			'BRL' => __( 'Brazilian Real', 'wurrr' ),
+			'MXN' => __( 'Mexican Peso', 'wurrr' ),
+			'NZD' => __( 'New Zealand Dollar', 'wurrr' ),
+			'SEK' => __( 'Swedish Krona', 'wurrr' ),
+			'NOK' => __( 'Norwegian Krone', 'wurrr' ),
+			'DKK' => __( 'Danish Krone', 'wurrr' ),
+			'TRY' => __( 'Turkish Lira', 'wurrr' ),
+			'ZAR' => __( 'South African Rand', 'wurrr' ),
+		);
+		$selected = array_map( 'trim', explode( ',', $value ) );
+		?>
+		<fieldset>
+			<legend class="screen-reader-text"><?php esc_html_e( 'Currencies shown in the [wurrr] switcher', 'wurrr' ); ?></legend>
+			<?php foreach ( $common as $code => $name ) : ?>
+				<label style="display:inline-block;width:200px;margin-bottom:4px;">
+					<input type="checkbox"
+						name="wp_exchange_public_currencies[]"
+						value="<?php echo esc_attr( $code ); ?>"
+						<?php checked( in_array( $code, $selected, true ) ); ?>
+					/>
+					<?php echo esc_html( $code . ' — ' . $name ); ?>
+				</label>
+			<?php endforeach; ?>
+		</fieldset>
+		<p class="description">
+			<?php esc_html_e( 'Only these currencies appear in the [wurrr] shortcode dropdown. Each will show its name and symbol after conversion. Leave none checked to show nothing.', 'wurrr' ); ?>
+		</p>
+		<input type="hidden" name="wp_exchange_public_currencies_submitted" value="1" />
+		<?php
+	}
+
 	public function sanitize_yes_no( string $value ): string {
 		return 'yes' === $value ? 'yes' : 'no';
+	}
+
+	public function sanitize_currency_list( $value ): string {
+		if ( is_array( $value ) ) {
+			$codes = array();
+			foreach ( $value as $code ) {
+				$code = strtoupper( sanitize_text_field( $code ) );
+				if ( preg_match( '/^[A-Z]{3}$/', $code ) ) {
+					$codes[] = $code;
+				}
+			}
+			return implode( ',', array_unique( $codes ) );
+		}
+		return sanitize_text_field( $value );
+	}
+
+	public function handle_public_currencies_update( $value, $old_value ): string {
+		if ( ! isset( $_POST['wp_exchange_public_currencies'] ) ) {
+			return '';
+		}
+		return $value;
 	}
 
 	public function plugin_action_links( array $links ): array {
@@ -641,7 +696,7 @@ class Fulfex_Admin {
 			wp_send_json_error( array( 'message' => __( 'Provider not found.', 'wurrr' ) ) );
 		}
 
-		$base    = get_option( 'wp_exchange_base_currency', 'USD' );
+		$base    = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : 'USD';
 		$start   = microtime( true );
 		$rates   = $target->fetch_rates( $base );
 		$latency = round( microtime( true ) - $start, 4 );

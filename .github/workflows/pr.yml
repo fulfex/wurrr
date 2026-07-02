@@ -150,15 +150,21 @@ jobs:
             foreach ($providers as $p) {
               if ($p->get_id() === "frankfurter") { $frank = $p; break; }
             }
-            if (!$frank) { echo "Frankfurter not found\n"; exit(1); }
+            if (!$frank) { echo "Frankfurter not found in providers\n"; exit(1); }
 
             $start = microtime(true);
             $rates = $frank->fetch_rates("USD");
             $latency = round(microtime(true) - $start, 4);
-            $count = count($rates["conversion_rates"] ?? []);
 
-            echo "Frankfurter fetched {$count} currencies in {$latency}s\n";
-            if ($count < 10) { echo "FAIL: too few currencies\n"; exit(1); }
+            $count = count($rates["conversion_rates"] ?? []);
+            $base  = $rates["base_code"] ?? "?";
+            echo "Frankfurter: base=$base currencies=$count latency=$latency" . "s\n";
+
+            if ($count < 10) {
+              echo "FAIL: too few currencies\n";
+              exit(1);
+            }
+            echo "Frankfurter OK\n";
           ' --path=/tmp/wordpress --allow-root
 
       - name: Verify shortcode renders

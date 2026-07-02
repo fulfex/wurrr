@@ -29,7 +29,7 @@ class Fulfex_Cache {
 
 	public function clear_rates(): void {
 		$providers = apply_filters( 'wp_exchange_providers', array() );
-		$base      = get_option( 'wp_exchange_base_currency', 'USD' );
+		$base      = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : 'USD';
 
 		foreach ( $providers as $provider ) {
 			$key   = $this->cache_key( $provider->get_id(), $base );
