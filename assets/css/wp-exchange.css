@@ -1,0 +1,36 @@
+.wp-exchange-switcher {
+	margin: 1em 0;
+	display: inline-block;
+}
+
+.wp-exchange-switcher select {
+	padding: 0.5em;
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	background: #fff;
+	font-size: 0.9em;
+	cursor: pointer;
+}
+
+.wp-exchange-price-converted {
+	white-space: nowrap;
+}
+
+.wp-exchange-price-converted .wp-exchange-original {
+	color: #999;
+	font-size: 0.85em;
+	text-decoration: line-through;
+}
+
+.wp-exchange-price-badge {
+	display: inline-block;
+	background: #f0f0f0;
+	padding: 0.15em 0.5em;
+	border-radius: 3px;
+	font-weight: 600;
+}
+
+.wp-exchange-price-badge::before {
+	content: "~";
+	margin-right: 0.15em;
+}
