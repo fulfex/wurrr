@@ -41,6 +41,7 @@ class Fulfex_Provider_Exchangeratesapi implements Fulfex_Provider {
 			$error_info = isset( $data['error'] ) ? print_r( $data['error'], true ) : 'unknown';
 			error_log(
 				sprintf(
+					/* translators: 1: provider name, 2: provider error details. */
 					__( '[Wurrr] %1$s error: %2$s', 'wurrr' ),
 					$this->get_name(),
 					$error_info

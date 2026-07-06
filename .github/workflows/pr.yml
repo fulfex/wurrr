@@ -42,7 +42,7 @@ jobs:
         run: |
           cd ..
           zip -r "wurrr/wurrr.zip" wurrr/ \
-            -x "wurrr/.git/*" "wurrr/.github/*" "wurrr/.*" "wurrr/*.zip"
+            -x "wurrr/.git/*" "wurrr/.github/*" "wurrr/.*" "wurrr/*.zip" "wurrr/AGENTS.md"
           echo "zip_file=${{ github.workspace }}/wurrr.zip" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact

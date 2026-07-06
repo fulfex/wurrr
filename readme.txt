@@ -1,8 +1,8 @@
 === Wurrr 🐱 - Free Forever Currency Exchange for Storefront ===
 Contributors: fulfex
-Tags: woocommerce, currency, exchange rate, converter, multi-currency, price conversion, currency switcher, free
+Tags: woocommerce, currency, exchange rate, converter, multi-currency
 Requires at least: 5.8
-Tested up to: 6.4
+Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 1.0.0
 License: GPL v3 or later

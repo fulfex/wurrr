@@ -353,6 +353,7 @@ class Fulfex_Admin {
 							if ( $last_success ) {
 								echo esc_html( gmdate( 'Y-m-d H:i:s', $last_success ) );
 								if ( $avg_latency !== '—' ) {
+									/* translators: %s: average provider response time in seconds. */
 									echo '<br><small>' . sprintf( esc_html__( '%ss avg', 'wurrr' ), esc_html( $avg_latency ) ) . '</small>';
 								}
 							} else {
@@ -537,10 +538,10 @@ class Fulfex_Admin {
 	}
 
 	public function render_display_style(): void {
-		$value = get_option( 'wp_exchange_display_style', 'inline' );
+		$value = get_option( 'wp_exchange_display_style', 'badge' );
 		$styles = array(
 			'inline'   => __( 'Inline (original next to converted)', 'wurrr' ),
-			'badge'    => __( 'Badge (show only converted, flag badge)', 'wurrr' ),
+			'badge'    => __( 'Converted only', 'wurrr' ),
 			'dropdown' => __( 'Dropdown (let user pick)', 'wurrr' ),
 		);
 		?>

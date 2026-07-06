@@ -19,9 +19,12 @@ class Fulfex_Frontend {
 		add_filter( 'woocommerce_get_price_html', array( $this, 'convert_price_html' ), 10, 2 );
 		add_filter( 'woocommerce_variable_price_html', array( $this, 'convert_variable_price_html' ), 10, 2 );
 		add_filter( 'woocommerce_cart_item_price', array( $this, 'convert_cart_item_price' ), 10, 3 );
+		add_filter( 'woocommerce_cart_item_subtotal', array( $this, 'convert_cart_item_subtotal' ), 10, 3 );
 		add_filter( 'woocommerce_cart_subtotal', array( $this, 'convert_cart_subtotal' ), 10, 3 );
 		add_filter( 'woocommerce_cart_total', array( $this, 'convert_cart_total' ), 10 );
 		add_filter( 'woocommerce_cart_totals_coupon_html', array( $this, 'convert_coupon_html' ), 10, 2 );
+		add_filter( 'woocommerce_cart_totals_fee_html', array( $this, 'convert_fee_html' ), 10, 2 );
+		add_filter( 'woocommerce_cart_shipping_method_full_label', array( $this, 'convert_shipping_label' ), 10, 2 );
 
 		add_shortcode( 'wurrr', array( $this, 'render_shortcode' ) );
 		add_shortcode( 'wurrr_switcher', array( $this, 'render_shortcode' ) );
@@ -93,7 +96,7 @@ class Fulfex_Frontend {
 			return $price_html;
 		}
 
-		$style    = get_option( 'wp_exchange_display_style', 'inline' );
+		$style    = get_option( 'wp_exchange_display_style', 'badge' );
 		$original = $this->currency->format_price( $price, $base );
 		$new      = $this->currency->format_price( $converted, $user_currency );
 
@@ -138,7 +141,7 @@ class Fulfex_Frontend {
 			return $price_html;
 		}
 
-		$style = get_option( 'wp_exchange_display_style', 'inline' );
+		$style = get_option( 'wp_exchange_display_style', 'badge' );
 
 		if ( $converted_min === $converted_max ) {
 			$new_price = $this->currency->format_price( $converted_min, $user_currency );
@@ -166,6 +169,33 @@ class Fulfex_Frontend {
 
 	public function convert_cart_item_price( string $price_html, array $cart_item, string $cart_item_key ): string {
 		return $this->convert_cart_price( $price_html, $cart_item['data'] ?? null );
+	}
+
+	public function convert_cart_item_subtotal( string $subtotal, array $cart_item, string $cart_item_key ): string {
+		$user_currency = $this->currency->get_user_currency();
+		$base          = $this->currency->get_base_currency();
+
+		if ( $user_currency === $base ) {
+			return $subtotal;
+		}
+
+		$line_total = (float) ( $cart_item['line_total'] ?? 0 );
+		$amount     = $line_total;
+		if ( function_exists( 'WC' ) && WC()->cart && WC()->cart->display_prices_including_tax() ) {
+			$amount += (float) ( $cart_item['line_tax'] ?? 0 );
+		}
+
+		if ( $amount <= 0 ) {
+			return $subtotal;
+		}
+
+		$converted = $this->currency->convert_price( $amount, $base, $user_currency );
+
+		if ( $converted === $amount ) {
+			return $subtotal;
+		}
+
+		return $this->currency->format_price( $converted, $user_currency );
 	}
 
 	public function convert_cart_subtotal( string $subtotal, bool $compound, $cart ): string {
@@ -206,6 +236,65 @@ class Fulfex_Frontend {
 			$this->currency->format_price( $converted, $user_currency ),
 			$coupon_html
 		);
+	}
+
+	public function convert_fee_html( string $fee_html, $fee ): string {
+		$user_currency = $this->currency->get_user_currency();
+		$base          = $this->currency->get_base_currency();
+
+		if ( $user_currency === $base ) {
+			return $fee_html;
+		}
+
+		$amount = (float) ( $fee->total ?? 0 );
+		if ( function_exists( 'WC' ) && WC()->cart && WC()->cart->display_prices_including_tax() ) {
+			$amount += (float) ( $fee->tax ?? 0 );
+		}
+
+		if ( 0.0 === $amount ) {
+			return $fee_html;
+		}
+
+		$converted = $this->currency->convert_price( $amount, $base, $user_currency );
+
+		if ( $converted === $amount ) {
+			return $fee_html;
+		}
+
+		return $this->currency->format_price( $converted, $user_currency );
+	}
+
+	public function convert_shipping_label( string $label, $method ): string {
+		$user_currency = $this->currency->get_user_currency();
+		$base          = $this->currency->get_base_currency();
+
+		if ( $user_currency === $base || ! is_object( $method ) || ! method_exists( $method, 'get_cost' ) ) {
+			return $label;
+		}
+
+		$amount = (float) $method->get_cost();
+		if ( function_exists( 'WC' ) && WC()->cart && WC()->cart->display_prices_including_tax() && method_exists( $method, 'get_taxes' ) ) {
+			$amount += array_sum( array_map( 'floatval', (array) $method->get_taxes() ) );
+		}
+
+		if ( $amount <= 0 ) {
+			return $label;
+		}
+
+		$converted = $this->currency->convert_price( $amount, $base, $user_currency );
+
+		if ( $converted === $amount ) {
+			return $label;
+		}
+
+		$base_price      = function_exists( 'wc_price' ) ? wc_price( $amount, array( 'currency' => $base ) ) : $this->currency->format_price( $amount, $base );
+		$converted_price = $this->currency->format_price( $converted, $user_currency );
+
+		if ( false !== strpos( $label, $base_price ) ) {
+			return str_replace( $base_price, $converted_price, $label );
+		}
+
+		return preg_replace( '/:\s*<span class="woocommerce-Price-amount amount">.*?<\/span>/s', ': ' . $converted_price, $label ) ?: $label;
 	}
 
 	public function convert_cart_total( string $total ): string {
