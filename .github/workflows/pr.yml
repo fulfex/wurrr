@@ -29,14 +29,21 @@ jobs:
           coverage: none
 
       - name: PHP Lint
-        run: find . -name '*.php' -not -path './vendor/*' -exec php -l {} \; | grep -v "No syntax errors"
+        run: |
+          ERRORS=0
+          while IFS= read -r -d '' file; do
+            php -l "$file" 2>&1 | grep -qv "No syntax errors" && ERRORS=$((ERRORS+1))
+          done < <(find . -name '*.php' -print0)
+          echo "Lint errors: $ERRORS"
+          test "$ERRORS" -eq 0 || exit 1
 
       - name: Build plugin ZIP
         id: build
         run: |
-          PLUGIN_SLUG=wurrr
-          zip -r "${PLUGIN_SLUG}.zip" . -x "*.git*" "*/.github/*" "*/vendor/*" "*/node_modules/*"
-          echo "zip_file=${PLUGIN_SLUG}.zip" >> "$GITHUB_OUTPUT"
+          cd ..
+          zip -r "wurrr/wurrr.zip" wurrr/ \
+            -x "wurrr/.git/*" "wurrr/.github/*" "wurrr/.*" "wurrr/*.zip" "wurrr/AGENTS.md"
+          echo "zip_file=${{ github.workspace }}/wurrr.zip" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -45,8 +52,8 @@ jobs:
           path: ${{ steps.build.outputs.zip_file }}
           if-no-files-found: error
 
-  wordpress:
-    name: "Integration + Plugin Check (WP latest / WC latest / PHP 8.1)"
+  integration:
+    name: "WP + WC + Plugin Check (PHP 8.1)"
     runs-on: ubuntu-latest
     needs: static
 
@@ -84,8 +91,13 @@ jobs:
       - name: Install WordPress
         run: |
           wp core download --path=/tmp/wordpress --allow-root
-          wp config create --dbname=wordpress_test --dbuser=root --dbpass=root --dbhost=127.0.0.1 --path=/tmp/wordpress --allow-root
-          wp core install --url=http://localhost --title="Wurrr Test" --admin_user=admin --admin_password=admin --admin_email=test@test.com --path=/tmp/wordpress --allow-root
+          wp config create \
+            --dbname=wordpress_test --dbuser=root --dbpass=root --dbhost=127.0.0.1 \
+            --path=/tmp/wordpress --allow-root
+          wp core install \
+            --url=http://localhost --title="Wurrr Test" \
+            --admin_user=admin --admin_password=admin --admin_email=test@test.com \
+            --path=/tmp/wordpress --allow-root
 
       - name: Install WooCommerce
         run: |
@@ -100,38 +112,83 @@ jobs:
       - name: Install plugin from build
         run: |
           unzip -q /tmp/plugin-build/wurrr.zip -d /tmp/wordpress/wp-content/plugins/
-          ls -la /tmp/wordpress/wp-content/plugins/
+          ls -la /tmp/wordpress/wp-content/plugins/wurrr/
 
       - name: Activate plugin
         run: |
           wp plugin activate wurrr --path=/tmp/wordpress --allow-root
 
-      - name: Verify plugin is active
-        run: |
-          wp plugin list --status=active --path=/tmp/wordpress --allow-root | grep wurrr
-
-      - name: Check for PHP fatal errors on load
-        run: |
-          wp eval 'echo "WordPress loaded OK\n";' --path=/tmp/wordpress --allow-root
-          wp eval '
-            $plugin_data = get_plugin_data("/tmp/wordpress/wp-content/plugins/wurrr/wurrr.php");
-            echo "Plugin: " . $plugin_data["Name"] . "\n";
-            echo "Version: " . $plugin_data["Version"] . "\n";
-          ' --path=/tmp/wordpress --allow-root
-
-      - name: Verify WooCommerce settings page loads
+      - name: Verify plugin header and PHP load
         run: |
           wp eval '
-            $admin = new Fulfex_Admin();
-            echo "Fulfex_Admin instantiated OK\n";
-            echo "WooCommerce: " . (class_exists("WooCommerce") ? "active" : "missing") . "\n";
+            $data = get_plugin_data("/tmp/wordpress/wp-content/plugins/wurrr/wurrr.php");
+            echo "Name:    " . $data["Name"] . "\n";
+            echo "Version: " . $data["Version"] . "\n";
+            echo "WC req:  " . ($data["WC requires at least"] ?? "N/A") . "\n";
+
+            $loaded = class_exists("Fulfex_Plugin") && class_exists("Fulfex_Admin") && class_exists("Fulfex_Cache");
+            echo "Classes: " . ($loaded ? "OK" : "FAIL") . "\n";
+            if (!$loaded) exit(1);
           ' --path=/tmp/wordpress --allow-root
 
-      - name: Deactivate and reactivate (lifecycle test)
+      - name: Verify providers are registered
+        run: |
+          wp eval '
+            $providers = apply_filters("wp_exchange_providers", []);
+            echo "Providers: " . count($providers) . "\n";
+            foreach ($providers as $p) {
+              echo "  - " . $p->get_id() . " (" . $p->get_name() . ")\n";
+            }
+            if (count($providers) < 1) exit(1);
+          ' --path=/tmp/wordpress --allow-root
+
+      - name: Verify Frankfurter works (no API key)
+        run: |
+          wp eval '
+            $providers = apply_filters("wp_exchange_providers", []);
+            $frank = null;
+            foreach ($providers as $p) {
+              if ($p->get_id() === "frankfurter") { $frank = $p; break; }
+            }
+            if (!$frank) { echo "Frankfurter not found in providers\n"; exit(1); }
+
+            $start = microtime(true);
+            $rates = $frank->fetch_rates("USD");
+            $latency = round(microtime(true) - $start, 4);
+
+            $count = count($rates["conversion_rates"] ?? []);
+            $base  = $rates["base_code"] ?? "?";
+            echo "Frankfurter: base=$base currencies=$count latency=$latency" . "s\n";
+
+            if ($count < 10) {
+              echo "FAIL: too few currencies\n";
+              exit(1);
+            }
+            echo "Frankfurter OK\n";
+          ' --path=/tmp/wordpress --allow-root
+
+      - name: Verify shortcode renders
+        run: |
+          wp eval '
+            $frontend = new Fulfex_Frontend(
+              new Fulfex_Currency(
+                new Fulfex_API(new Fulfex_Cache()),
+                new Fulfex_Cache()
+              )
+            );
+            $html = $frontend->render_switcher();
+            if (strpos($html, "wurrr-switcher") === false) {
+              echo "FAIL: shortcode missing switcher class\n";
+              exit(1);
+            }
+            echo "Shortcode OK: " . strlen($html) . " bytes\n";
+          ' --path=/tmp/wordpress --allow-root
+
+      - name: Deactivate and reactivate (lifecycle)
         run: |
           wp plugin deactivate wurrr --path=/tmp/wordpress --allow-root
           wp plugin activate wurrr --path=/tmp/wordpress --allow-root
-          wp eval 'echo "Reactivation OK\n";' --path=/tmp/wordpress --allow-root
+          wp eval 'echo "Reactivate OK\n";' --path=/tmp/wordpress --allow-root
 
       - name: Install Plugin Check
         run: |
@@ -146,7 +203,9 @@ jobs:
             --format=json \
             --categories=general,plugin_repo,security,performance,accessibility \
             > /tmp/plugin-check-results.json 2>&1 || true
+
           cat /tmp/plugin-check-results.json
+
           ERRORS=$(php -r '
             $content = file_get_contents("/tmp/plugin-check-results.json");
             $sections = preg_split("/^FILE: /m", $content, -1, PREG_SPLIT_NO_EMPTY);
@@ -158,6 +217,7 @@ jobs:
             }
             echo $count;
           ')
+
           WARNINGS=$(php -r '
             $content = file_get_contents("/tmp/plugin-check-results.json");
             $sections = preg_split("/^FILE: /m", $content, -1, PREG_SPLIT_NO_EMPTY);
@@ -169,9 +229,11 @@ jobs:
             }
             echo $count;
           ')
+
           echo "Plugin Check: ${ERRORS} error(s), ${WARNINGS} warning(s)"
+
           if [ "$ERRORS" -gt 0 ]; then
-            echo "::error::Plugin Check found ${ERRORS} error(s). Fix them before merging."
+            echo "::error::Plugin Check found ${ERRORS} error(s)."
             exit 1
           fi
 

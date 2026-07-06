@@ -14,6 +14,8 @@ class Fulfex_Admin {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_post_wp_exchange_save_providers', array( $this, 'save_providers' ) );
 		add_action( 'admin_notices', array( $this, 'admin_notices' ) );
+		add_action( 'wp_ajax_wurrr_health_test', array( $this, 'ajax_health_test' ) );
+		add_filter( 'pre_update_option_wp_exchange_public_currencies', array( $this, 'handle_public_currencies_update' ), 10, 2 );
 		add_filter(
 			'plugin_action_links_' . WURRR_PLUGIN_BASENAME,
 			array( $this, 'plugin_action_links' )
@@ -24,7 +26,7 @@ class Fulfex_Admin {
 		add_submenu_page(
 			'woocommerce',
 			__( 'Currency Exchange', 'wurrr' ),
-			__( 'Currency Exchange 🐱', 'wurrr' ),
+			__( 'Currency (Wurrr)', 'wurrr' ),
 			'manage_woocommerce',
 			'wurrr',
 			array( $this, 'render_settings_page' )
@@ -32,26 +34,18 @@ class Fulfex_Admin {
 	}
 
 	public function register_settings(): void {
-		register_setting( 'wp_exchange_settings', 'wp_exchange_base_currency', array( 'sanitize_callback' => 'sanitize_text_field' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_cache_duration', array( 'sanitize_callback' => 'absint' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_enable_ip_detection', array( 'sanitize_callback' => array( $this, 'sanitize_yes_no' ) ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_display_style', array( 'sanitize_callback' => 'sanitize_text_field' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_switcher_position', array( 'sanitize_callback' => 'sanitize_text_field' ) );
 		register_setting( 'wp_exchange_settings', 'wp_exchange_enable_round_robin', array( 'sanitize_callback' => array( $this, 'sanitize_yes_no' ) ) );
+		register_setting( 'wp_exchange_settings', 'wp_exchange_public_currencies', array( 'sanitize_callback' => array( $this, 'sanitize_currency_list' ) ) );
 
 		add_settings_section(
 			'wp_exchange_general',
 			__( 'General Settings', 'wurrr' ),
 			null,
 			'wp_exchange_settings'
-		);
-
-		add_settings_field(
-			'wp_exchange_base_currency',
-			__( 'Base Currency', 'wurrr' ),
-			array( $this, 'render_currency_select' ),
-			'wp_exchange_settings',
-			'wp_exchange_general'
 		);
 
 		add_settings_field(
@@ -93,6 +87,14 @@ class Fulfex_Admin {
 			'wp_exchange_settings',
 			'wp_exchange_general'
 		);
+
+		add_settings_field(
+			'wp_exchange_public_currencies',
+			__( 'Public Currencies', 'wurrr' ),
+			array( $this, 'render_public_currencies' ),
+			'wp_exchange_settings',
+			'wp_exchange_general'
+		);
 	}
 
 	public function render_settings_page(): void {
@@ -112,6 +114,9 @@ class Fulfex_Admin {
 				<a href="?page=wurrr&tab=providers" class="nav-tab <?php echo 'providers' === $active_tab ? 'nav-tab-active' : ''; ?>">
 					<?php esc_html_e( 'Providers', 'wurrr' ); ?>
 				</a>
+				<a href="?page=wurrr&tab=health" class="nav-tab <?php echo 'health' === $active_tab ? 'nav-tab-active' : ''; ?>">
+					<?php esc_html_e( 'Health Monitor', 'wurrr' ); ?>
+				</a>
 			</h2>
 
 			<?php if ( 'providers' === $active_tab ) : ?>
@@ -119,6 +124,8 @@ class Fulfex_Admin {
 					<input type="hidden" name="action" value="wp_exchange_save_providers" />
 					<?php $this->render_providers_tab(); ?>
 				</form>
+			<?php elseif ( 'health' === $active_tab ) : ?>
+				<?php $this->render_health_tab(); ?>
 			<?php else : ?>
 				<form method="post" action="options.php">
 					<?php
@@ -252,6 +259,207 @@ class Fulfex_Admin {
 		<?php
 	}
 
+	private function render_health_tab(): void {
+		$providers = apply_filters( 'wp_exchange_providers', array() );
+		$health    = get_option( 'wp_exchange_provider_health', array() );
+		$base      = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : 'USD';
+
+		?>
+		<p>
+			<?php esc_html_e( 'Real-time health and performance of each exchange rate provider.', 'wurrr' ); ?>
+			<button type="button" id="wurrr-test-all" class="button button-secondary" style="margin-left:1em;">
+				<?php esc_html_e( 'Test All Providers Now', 'wurrr' ); ?>
+			</button>
+			<span id="wurrr-test-status" style="margin-left:1em; display:none;"></span>
+		</p>
+
+		<table class="widefat striped" id="wurrr-health-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Provider', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Status', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Last Success', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Last Error', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Requests', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Error Rate', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Cache', 'wurrr' ); ?></th>
+					<th><?php esc_html_e( 'Action', 'wurrr' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $providers as $provider ) : ?>
+					<?php
+					$pid = $provider->get_id();
+					$h   = $health[ $pid ] ?? array();
+
+					$last_success   = $h['last_success'] ?? 0;
+					$last_error     = $h['last_error'] ?? 0;
+					$last_error_msg = $h['last_error_msg'] ?? '';
+					$total_requests = (int) ( $h['total_requests'] ?? 0 );
+					$total_errors   = (int) ( $h['total_errors'] ?? 0 );
+					$error_rate     = $total_requests > 0 ? round( ( $total_errors / $total_requests ) * 100, 1 ) : 0;
+					$avg_latency    = isset( $h['avg_latency'] ) ? number_format( $h['avg_latency'], 2 ) : '—';
+
+					$cache = new Fulfex_Cache();
+					$cached = $cache->get_rates( $pid, $base );
+					$stale  = $cache->get_stale_rates( $pid, $base );
+
+					if ( false !== $cached && ! empty( $cached['conversion_rates'] ) ) {
+						$cache_status = __( 'Fresh', 'wurrr' );
+						$cache_icon   = '🟢';
+					} elseif ( false !== $stale && ! empty( $stale['conversion_rates'] ) ) {
+						$cache_status = __( 'Stale', 'wurrr' );
+						$cache_icon   = '🟡';
+					} else {
+						$cache_status = __( 'Empty', 'wurrr' );
+						$cache_icon   = '⚪';
+					}
+
+					if ( $last_success > 0 && ( $last_error === 0 || $last_success > $last_error ) ) {
+						$status       = __( 'Healthy', 'wurrr' );
+						$status_icon  = '🟢';
+						$status_class = 'healthy';
+					} elseif ( $last_error > 0 && $last_success === 0 ) {
+						$status       = __( 'Failing', 'wurrr' );
+						$status_icon  = '🔴';
+						$status_class = 'failing';
+					} elseif ( $last_error > $last_success ) {
+						$status       = __( 'Degraded', 'wurrr' );
+						$status_icon  = '🟠';
+						$status_class = 'degraded';
+					} else {
+						$status       = __( 'Unknown', 'wurrr' );
+						$status_icon  = '⚪';
+						$status_class = 'unknown';
+					}
+
+					$settings = get_option( 'wp_exchange_providers_settings', array() );
+					$creds    = $settings[ $pid ] ?? array();
+					$valid    = $provider->validate_credentials( $creds );
+					?>
+					<tr class="wurrr-health-row" data-provider-id="<?php echo esc_attr( $pid ); ?>">
+						<td>
+							<strong><?php echo esc_html( $provider->get_name() ); ?></strong><br>
+							<small><code><?php echo esc_html( $pid ); ?></code></small>
+							<?php if ( true !== $valid ) : ?>
+								<br><small style="color:#dc3232;"><?php esc_html_e( '(not configured)', 'wurrr' ); ?></small>
+							<?php endif; ?>
+						</td>
+						<td class="health-status <?php echo esc_attr( $status_class ); ?>">
+							<?php echo esc_html( $status_icon . ' ' . $status ); ?>
+						</td>
+						<td>
+							<?php
+							if ( $last_success ) {
+								echo esc_html( gmdate( 'Y-m-d H:i:s', $last_success ) );
+								if ( $avg_latency !== '—' ) {
+									/* translators: %s: average provider response time in seconds. */
+									echo '<br><small>' . sprintf( esc_html__( '%ss avg', 'wurrr' ), esc_html( $avg_latency ) ) . '</small>';
+								}
+							} else {
+								echo '—';
+							}
+							?>
+						</td>
+						<td>
+							<?php
+							if ( $last_error ) {
+								echo esc_html( gmdate( 'Y-m-d H:i:s', $last_error ) );
+								if ( $last_error_msg ) {
+									echo '<br><small style="color:#dc3232;">' . esc_html( $last_error_msg ) . '</small>';
+								}
+							} else {
+								echo '—';
+							}
+							?>
+						</td>
+						<td><?php echo esc_html( $total_requests ); ?></td>
+						<td>
+							<?php echo esc_html( $error_rate ); ?>%
+							<small>(<?php echo esc_html( $total_errors ); ?>/<?php echo esc_html( $total_requests ); ?>)</small>
+						</td>
+						<td>
+							<?php echo esc_html( $cache_icon . ' ' . $cache_status ); ?>
+						</td>
+						<td>
+							<button type="button" class="button button-small wurrr-test-provider" data-provider-id="<?php echo esc_attr( $pid ); ?>">
+								<?php esc_html_e( 'Test Now', 'wurrr' ); ?>
+							</button>
+							<span class="wurrr-test-result" style="margin-left:0.5em;"></span>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+
+		<script>
+		jQuery( function( $ ) {
+			function testProvider( providerId, $button ) {
+				var $row = $button.closest( 'tr' );
+				var $result = $row.find( '.wurrr-test-result' );
+
+				$button.prop( 'disabled', true );
+				$result.text( '<?php echo esc_js( __( 'Testing…', 'wurrr' ) ); ?>' );
+
+				$.post( ajaxurl, {
+					action: 'wurrr_health_test',
+					provider_id: providerId,
+					nonce: '<?php echo esc_js( wp_create_nonce( 'wurrr_health_nonce' ) ); ?>'
+				}, function( response ) {
+					$button.prop( 'disabled', false );
+					if ( response.success ) {
+						$result.css( 'color', '#46b450' ).text( '<?php echo esc_js( __( 'OK', 'wurrr' ) ); ?> (' + response.data.latency + 's)' );
+						$row.find( '.health-status' ).html( '🟢 <?php echo esc_js( __( 'Healthy', 'wurrr' ) ); ?>' );
+					} else {
+						$result.css( 'color', '#dc3232' ).text( '<?php echo esc_js( __( 'Failed', 'wurrr' ) ); ?>' );
+						$row.find( '.health-status' ).html( '🔴 <?php echo esc_js( __( 'Failing', 'wurrr' ) ); ?>' );
+					}
+					setTimeout( function() { location.reload(); }, 3000 );
+				} );
+			}
+
+			$( '.wurrr-test-provider' ).on( 'click', function() {
+				testProvider( $( this ).data( 'provider-id' ), $( this ) );
+			} );
+
+			$( '#wurrr-test-all' ).on( 'click', function() {
+				var $btn = $( this );
+				var $status = $( '#wurrr-test-status' );
+				$btn.prop( 'disabled', true );
+				$status.show().text( '<?php echo esc_js( __( 'Testing all providers…', 'wurrr' ) ); ?>' );
+
+				var rows = $( '.wurrr-health-row' );
+				var done = 0;
+				rows.each( function() {
+					var $row = $( this );
+					var pid = $row.data( 'provider-id' );
+					var $b = $row.find( '.wurrr-test-provider' );
+
+					$.post( ajaxurl, {
+						action: 'wurrr_health_test',
+						provider_id: pid,
+						nonce: '<?php echo esc_js( wp_create_nonce( 'wurrr_health_nonce' ) ); ?>'
+					}, function( response ) {
+						done++;
+						if ( done >= rows.length ) {
+							$btn.prop( 'disabled', false );
+							$status.text( '<?php echo esc_js( __( 'All tests complete. Reloading…', 'wurrr' ) ); ?>' );
+							setTimeout( function() { location.reload(); }, 2000 );
+						}
+					} );
+				} );
+			} );
+		} );
+		</script>
+		<style>
+		.health-status.healthy { color: #46b450; font-weight: 600; }
+		.health-status.degraded { color: #f0ad4e; font-weight: 600; }
+		.health-status.failing { color: #dc3232; font-weight: 600; }
+		.health-status.unknown { color: #666; }
+		</style>
+		<?php
+	}
+
 	public function save_providers(): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			return;
@@ -311,21 +519,6 @@ class Fulfex_Admin {
 		settings_errors( 'wp_exchange' );
 	}
 
-	public function render_currency_select(): void {
-		$selected = get_option( 'wp_exchange_base_currency', 'USD' );
-		$common   = array( 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KRW', 'HKD', 'SGD', 'MYR', 'IDR', 'INR', 'BRL', 'CAD', 'AUD', 'CHF', 'SEK', 'NOK', 'DKK', 'NZD', 'ZAR' );
-		?>
-		<select name="wp_exchange_base_currency">
-			<?php foreach ( $common as $code ) : ?>
-				<option value="<?php echo esc_attr( $code ); ?>" <?php selected( $selected, $code ); ?>>
-					<?php echo esc_html( $code ); ?>
-				</option>
-			<?php endforeach; ?>
-		</select>
-		<p class="description"><?php esc_html_e( 'Your store\'s default base currency. All prices are converted from this currency.', 'wurrr' ); ?></p>
-		<?php
-	}
-
 	public function render_cache_duration(): void {
 		$value = get_option( 'wp_exchange_cache_duration', 24 );
 		?>
@@ -345,10 +538,10 @@ class Fulfex_Admin {
 	}
 
 	public function render_display_style(): void {
-		$value = get_option( 'wp_exchange_display_style', 'inline' );
+		$value = get_option( 'wp_exchange_display_style', 'badge' );
 		$styles = array(
 			'inline'   => __( 'Inline (original next to converted)', 'wurrr' ),
-			'badge'    => __( 'Badge (show only converted, flag badge)', 'wurrr' ),
+			'badge'    => __( 'Converted only', 'wurrr' ),
 			'dropdown' => __( 'Dropdown (let user pick)', 'wurrr' ),
 		);
 		?>
@@ -367,7 +560,7 @@ class Fulfex_Admin {
 		$positions = array(
 			'header'    => __( 'Header', 'wurrr' ),
 			'footer'    => __( 'Footer', 'wurrr' ),
-			'shortcode' => __( 'Shortcode only (use [wurrr_switcher] in content or widgets)', 'wurrr' ),
+			'shortcode' => __( 'Shortcode only (use [wurrr] in content or widgets)', 'wurrr' ),
 		);
 		?>
 		<select name="wp_exchange_switcher_position">
@@ -379,7 +572,7 @@ class Fulfex_Admin {
 		</select>
 		<p class="description">
 			<?php esc_html_e( 'Use shortcode', 'wurrr' ); ?>
-			<code>[wurrr_switcher]</code>
+			<code>[wurrr]</code>
 			<?php esc_html_e( 'to place the currency switcher anywhere.', 'wurrr' ); ?>
 		</p>
 		<?php
@@ -398,8 +591,77 @@ class Fulfex_Admin {
 		<?php
 	}
 
+	public function render_public_currencies(): void {
+		$value  = get_option( 'wp_exchange_public_currencies', 'USD,EUR,GBP,JPY,AUD,CAD,CHF,CNY,SGD' );
+		$common = array(
+			'USD' => __( 'US Dollar', 'wurrr' ),
+			'EUR' => __( 'Euro', 'wurrr' ),
+			'GBP' => __( 'British Pound', 'wurrr' ),
+			'JPY' => __( 'Japanese Yen', 'wurrr' ),
+			'AUD' => __( 'Australian Dollar', 'wurrr' ),
+			'CAD' => __( 'Canadian Dollar', 'wurrr' ),
+			'CHF' => __( 'Swiss Franc', 'wurrr' ),
+			'CNY' => __( 'Chinese Yuan', 'wurrr' ),
+			'SGD' => __( 'Singapore Dollar', 'wurrr' ),
+			'KRW' => __( 'South Korean Won', 'wurrr' ),
+			'HKD' => __( 'Hong Kong Dollar', 'wurrr' ),
+			'MYR' => __( 'Malaysian Ringgit', 'wurrr' ),
+			'IDR' => __( 'Indonesian Rupiah', 'wurrr' ),
+			'INR' => __( 'Indian Rupee', 'wurrr' ),
+			'BRL' => __( 'Brazilian Real', 'wurrr' ),
+			'MXN' => __( 'Mexican Peso', 'wurrr' ),
+			'NZD' => __( 'New Zealand Dollar', 'wurrr' ),
+			'SEK' => __( 'Swedish Krona', 'wurrr' ),
+			'NOK' => __( 'Norwegian Krone', 'wurrr' ),
+			'DKK' => __( 'Danish Krone', 'wurrr' ),
+			'TRY' => __( 'Turkish Lira', 'wurrr' ),
+			'ZAR' => __( 'South African Rand', 'wurrr' ),
+		);
+		$selected = array_map( 'trim', explode( ',', $value ) );
+		?>
+		<fieldset>
+			<legend class="screen-reader-text"><?php esc_html_e( 'Currencies shown in the [wurrr] switcher', 'wurrr' ); ?></legend>
+			<?php foreach ( $common as $code => $name ) : ?>
+				<label style="display:inline-block;width:200px;margin-bottom:4px;">
+					<input type="checkbox"
+						name="wp_exchange_public_currencies[]"
+						value="<?php echo esc_attr( $code ); ?>"
+						<?php checked( in_array( $code, $selected, true ) ); ?>
+					/>
+					<?php echo esc_html( $code . ' — ' . $name ); ?>
+				</label>
+			<?php endforeach; ?>
+		</fieldset>
+		<p class="description">
+			<?php esc_html_e( 'Only these currencies appear in the [wurrr] shortcode dropdown. Each will show its name and symbol after conversion. Leave none checked to show nothing.', 'wurrr' ); ?>
+		</p>
+		<input type="hidden" name="wp_exchange_public_currencies_submitted" value="1" />
+		<?php
+	}
+
 	public function sanitize_yes_no( string $value ): string {
 		return 'yes' === $value ? 'yes' : 'no';
+	}
+
+	public function sanitize_currency_list( $value ): string {
+		if ( is_array( $value ) ) {
+			$codes = array();
+			foreach ( $value as $code ) {
+				$code = strtoupper( sanitize_text_field( $code ) );
+				if ( preg_match( '/^[A-Z]{3}$/', $code ) ) {
+					$codes[] = $code;
+				}
+			}
+			return implode( ',', array_unique( $codes ) );
+		}
+		return sanitize_text_field( $value );
+	}
+
+	public function handle_public_currencies_update( $value, $old_value ): string {
+		if ( ! isset( $_POST['wp_exchange_public_currencies'] ) ) {
+			return '';
+		}
+		return $value;
 	}
 
 	public function plugin_action_links( array $links ): array {
@@ -410,5 +672,73 @@ class Fulfex_Admin {
 		);
 		array_unshift( $links, $settings_link );
 		return $links;
+	}
+
+	public function ajax_health_test(): void {
+		check_ajax_referer( 'wurrr_health_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+		}
+
+		$provider_id = isset( $_POST['provider_id'] ) ? sanitize_text_field( wp_unslash( $_POST['provider_id'] ) ) : '';
+
+		$providers = apply_filters( 'wp_exchange_providers', array() );
+		$target    = null;
+
+		foreach ( $providers as $p ) {
+			if ( $p->get_id() === $provider_id ) {
+				$target = $p;
+				break;
+			}
+		}
+
+		if ( ! $target ) {
+			wp_send_json_error( array( 'message' => __( 'Provider not found.', 'wurrr' ) ) );
+		}
+
+		$base    = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : 'USD';
+		$start   = microtime( true );
+		$rates   = $target->fetch_rates( $base );
+		$latency = round( microtime( true ) - $start, 4 );
+
+		$health = get_option( 'wp_exchange_provider_health', array() );
+		$h      = $health[ $provider_id ] ?? array();
+		$h['total_requests'] = (int) ( $h['total_requests'] ?? 0 ) + 1;
+
+		if ( ! empty( $rates['conversion_rates'] ) ) {
+			$h['last_success'] = time();
+			$h['last_error']   = $h['last_error'] ?? 0;
+			$h['last_error_msg'] = '';
+
+			if ( isset( $h['total_latency'] ) ) {
+				$h['total_latency'] += $latency;
+			} else {
+				$h['total_latency'] = $latency;
+			}
+		} else {
+			$h['last_error']     = time();
+			$h['last_error_msg'] = __( 'No rates returned.', 'wurrr' );
+			$h['total_errors']   = (int) ( $h['total_errors'] ?? 0 ) + 1;
+		}
+
+		if ( $h['total_requests'] > 0 && isset( $h['total_latency'] ) ) {
+			$h['avg_latency'] = round( $h['total_latency'] / $h['total_requests'], 4 );
+		}
+
+		$health[ $provider_id ] = $h;
+		update_option( 'wp_exchange_provider_health', $health );
+
+		if ( ! empty( $rates['conversion_rates'] ) ) {
+			wp_send_json_success(
+				array(
+					'latency'   => $latency,
+					'rates'     => count( $rates['conversion_rates'] ) . ' ' . __( 'currencies', 'wurrr' ),
+					'providers_count' => count( $rates['conversion_rates'] ),
+				)
+			);
+		} else {
+			wp_send_json_error( array( 'message' => __( 'Failed to fetch rates.', 'wurrr' ) ) );
+		}
 	}
 }

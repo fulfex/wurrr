@@ -85,10 +85,10 @@ class Fulfex_Plugin {
 			);
 		}
 
-		add_option( 'wp_exchange_base_currency', 'USD' );
 		add_option( 'wp_exchange_cache_duration', 24 );
+		add_option( 'wp_exchange_public_currencies', 'USD,EUR,GBP,JPY,AUD,CAD,CHF,CNY,SGD' );
 		add_option( 'wp_exchange_enable_ip_detection', 'yes' );
-		add_option( 'wp_exchange_display_style', 'inline' );
+		add_option( 'wp_exchange_display_style', 'badge' );
 		add_option( 'wp_exchange_switcher_position', 'shortcode' );
 		add_option( 'wp_exchange_enable_round_robin', 'no' );
 		add_option( 'wp_exchange_providers_settings', array() );

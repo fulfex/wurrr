@@ -127,7 +127,9 @@ class Fulfex_Currency {
 	}
 
 	public function get_base_currency(): string {
-		return get_option( 'wp_exchange_base_currency', 'USD' );
+		return function_exists( 'get_woocommerce_currency' )
+			? get_woocommerce_currency()
+			: 'USD';
 	}
 
 	public function get_session_currency(): string|false {

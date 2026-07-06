@@ -1,8 +1,8 @@
 === Wurrr 🐱 - Free Forever Currency Exchange for Storefront ===
 Contributors: fulfex
-Tags: woocommerce, currency, exchange rate, converter, multi-currency, price conversion, currency switcher, free
+Tags: woocommerce, currency, exchange rate, converter, multi-currency
 Requires at least: 5.8
-Tested up to: 6.4
+Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 1.0.0
 License: GPL v3 or later
@@ -55,7 +55,7 @@ Frankfurter is the easiest to start with since it requires no API key. For produ
 
 = Can customers choose their own currency? =
 
-Yes. Enable the currency switcher in settings and place it via the `[wurrr_switcher]` shortcode or a widget area.
+Yes. Enable the currency switcher in settings and place it via the `[wurrr]` shortcode or a widget area.
 
 = Does this work with variable products? =
 

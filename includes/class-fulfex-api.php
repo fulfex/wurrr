@@ -32,13 +32,18 @@ class Fulfex_API {
 				return $cached;
 			}
 
+			$start = microtime( true );
 			$rates = $provider->fetch_rates( $base_currency );
+			$latency = round( microtime( true ) - $start, 4 );
 
 			if ( ! empty( $rates['conversion_rates'] ) ) {
 				$ttl = $this->calculate_ttl( $rates );
 				$this->cache->set_rates( $provider->get_id(), $base_currency, $rates, $ttl );
+				self::record_health( $provider->get_id(), true, $latency );
 				return $rates;
 			}
+
+			self::record_health( $provider->get_id(), false, $latency, __( 'No rates returned', 'wurrr' ) );
 
 			$stale = $this->cache->get_stale_rates( $provider->get_id(), $base_currency );
 			if ( false !== $stale ) {
@@ -60,16 +65,21 @@ class Fulfex_API {
 				return $cached;
 			}
 
-			$rates = $provider->fetch_rates( $base_currency );
+			$start   = microtime( true );
+			$rates   = $provider->fetch_rates( $base_currency );
+			$latency = round( microtime( true ) - $start, 4 );
 
 			if ( ! empty( $rates['conversion_rates'] ) ) {
 				$ttl = $this->calculate_ttl( $rates );
 				$this->cache->set_rates( $provider->get_id(), $base_currency, $rates, $ttl );
 
 				update_option( 'wp_exchange_rr_index', ( $provider_idx + 1 ) % $count );
+				self::record_health( $provider->get_id(), true, $latency );
 
 				return $rates;
 			}
+
+			self::record_health( $provider->get_id(), false, $latency, __( 'No rates returned', 'wurrr' ) );
 		}
 
 		$last_provider = $providers[ ( $index - 1 + $count ) % $count ];
@@ -144,5 +154,30 @@ class Fulfex_API {
 		}
 
 		return $default;
+	}
+
+	public static function record_health( string $provider_id, bool $success, float $latency = 0, string $error_msg = '' ): void {
+		$health = get_option( 'wp_exchange_provider_health', array() );
+		$h      = $health[ $provider_id ] ?? array();
+
+		$h['total_requests'] = (int) ( $h['total_requests'] ?? 0 ) + 1;
+
+		if ( $success ) {
+			$h['last_success']    = time();
+			$h['last_error_msg']  = '';
+			$h['total_latency']   = (float) ( $h['total_latency'] ?? 0 ) + $latency;
+		} else {
+			$h['last_error']      = time();
+			$h['last_error_msg']  = $error_msg;
+			$h['total_errors']    = (int) ( $h['total_errors'] ?? 0 ) + 1;
+			$h['last_success']    = $h['last_success'] ?? 0;
+		}
+
+		if ( $h['total_requests'] > 0 && isset( $h['total_latency'] ) ) {
+			$h['avg_latency'] = round( $h['total_latency'] / $h['total_requests'], 4 );
+		}
+
+		$health[ $provider_id ] = $h;
+		update_option( 'wp_exchange_provider_health', $health );
 	}
 }

@@ -36,7 +36,14 @@ class Fulfex_Provider_Exchangerate_Api implements Fulfex_Provider {
 
 		if ( 'error' === $data['result'] ) {
 			$error_type = isset( $data['error-type'] ) ? $data['error-type'] : 'unknown';
-			error_log( sprintf( __( '[Wurrr] %1$s error: %2$s', 'wurrr' ), $this->get_name(), $error_type ) );
+			error_log(
+				sprintf(
+					/* translators: 1: provider name, 2: provider error code. */
+					__( '[Wurrr] %1$s error: %2$s', 'wurrr' ),
+					$this->get_name(),
+					$error_type
+				)
+			);
 			return array();
 		}
 
@@ -89,6 +96,7 @@ class Fulfex_Provider_Exchangerate_Api implements Fulfex_Provider {
 			return new WP_Error(
 				$error_type,
 				sprintf(
+					/* translators: %s: provider error code. */
 					__( 'API returned error: %s', 'wurrr' ),
 					$error_type
 				)
